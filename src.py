@@ -26,6 +26,7 @@ For details on the API, see http://www.mega-nerd.com/SRC/api_full.html
 import ctypes
 import ctypes.util
 import numpy as np
+from itertools import repeat
 
 # try to load libsamplerate
 LIBNAME = "samplerate"
@@ -77,23 +78,30 @@ LINEAR = 4
 _MAX_CONVERTER = 4
 
 def _get_error_str(n):
+    """Convert numeric code into a error string
+
+    calls:
+            const char* src_strerror (int error) ;
+    """
     spointer = c_src.src_strerror(n);
     return ctypes.c_char_p(spointer).value
 
 def _fail(r):
+    """Parse the return code of C functions and raise an exception if there is
+    an error.
+    """
     if r != 0:
         msg = _get_error_str(r)
         raise RuntimeError(msg)
 
 class Resampler(object):
-    """
-    The resampler object takes a block of samples and outputs a resampled signal
+    """The resampler object takes a block of samples and outputs a resampled signal
     It is is used to resample a long signal by feeding it block by block.
     Blocks do not need to be the same size.
     """
     def __init__(self, converter_type, channels = 1, default_ratio = None):
-        """
-        Create a new resampler object.
+        """Create a new resampler object.
+
         Input:
             converter_type: mus be one of SINC_BEST, SINC_MEDIUM, SINC_FASTEST,
                             ZERO_ORDER_HOLD, LINEAR
@@ -118,8 +126,8 @@ class Resampler(object):
         self.frames_remaining = 0.0
 
     def process(self, data_in, ratio = None, end_of_input = False):
-        """
-        Process a block of samples
+        """Process a block of samples
+
         Input:
             data_in: A numpy array on input samples. In the case of multi-channel
                 input, each channel must be in a column
@@ -130,6 +138,7 @@ class Resampler(object):
                 i.e., it is None, a error will be raised.
             end_of_input: Set this flag to True when you want to process the last
                 block of input
+
         Output:
                 (data_out, input_frames_used)
             Where:
@@ -154,8 +163,12 @@ class Resampler(object):
                                     or data_in.shape[1] != self.channels):
             raise ValueError("data_in must have the same number of columns as channels")
 
-        if self.channels == 1 and data_in.squeeze().ndim > 1:
-            raise ValueError("data_in has more than one non-singleton dimension but Resampler has one channel")
+        if self.channels == 1:
+            in_squeezed = data_in.squeeze()
+            if in_squeezed.ndim > 2 or (in_squeezed.ndim == 2
+                                        and(0 not in in_squeezed.shape
+                                            and 1 not in in_squeezed.shape)):
+                raise ValueError("data_in has more than one non-singleton dimension but Resampler has one channel")
 
         # now lets check out the strides. We need the input to be in interleaved
         # format, which means that traversing the array linearly in memory is the
@@ -200,24 +213,71 @@ class Resampler(object):
 
         return real_data_out, input_frames_used
 
+    def end_input(self, ratio = None):
+        """Signal an end-of-input and return the last output samples.
+
+        This function is equivalent to calling process() with zero input frames.
+
+        Output:
+            (data_out, input_frames_used)
+
+            Note that input_frames_used will probaby be different from zero even
+            though we are calling process with zero samples, due to buffering
+            from previous frames.
+        """
+        return self.process(np.empty((0, self.channels)), ratio = ratio,
+                                                            end_of_input = True)
+
+    def process_iter(self, iterable, ratio = None):
+        """Iterate over "iterable", converting each block.
+
+        Ratio can be another iterable yieldig the conversion ratios, or it can be
+        a value. ratio = None will use the default ratio.
+
+        This iterator calls process with the values yielded for iterable.
+        At the end of the iteration, end_input is called and an extra block is
+        output.
+        The values yielded are blocks of data NOT tuples as returned process()
+        """
+        iterobj = iter(iterable)
+        try:
+            iterratios = iter(ratios)
+        except TypeError:
+            iterratios = repeat(ratios)
+
+        while True:
+            try:
+                in_block = next(iterobj)
+                this_ratio = next(iterratios)
+            except StopIteration:
+                break
+
+            yield self.process(in_block, this_ratio)[0]
+
+        try:
+            this_ratio = next(iterratios)
+        except StopIteration:
+            pass
+
+        yield end_input(this_ratio)[0]
+
 
     def set_default_ratio(self, new_default_ratio):
-        """
-        Change the default ratio
+        """Change the default ratio
         """
         self.default_ratio = new_default_ratio
 
     def set_ratio(self, new_ratio):
-        """
-        Abruptly change sample rate
+        """Abruptly change sample rate
+
         calls:
                 int src_set_ratio (SRC_STATE *state, double new_ratio) ;
         """
         _fail(c_src.src_set_ratio(self._state, float(new_ratio)))
 
     def reset(self):
-        """
-        Reset Resampler to initial state
+        """Reset Resampler to initial state
+
         calls:
                 int src_reset (SRC_STATE *state) ;
         """
@@ -225,8 +285,10 @@ class Resampler(object):
         _fail(c_src.src_reset(self._state))
 
     def __del__(self):
-        """
-        free the state pointer
+        """Free the state pointer
+
+        calls:
+                SRC_STATE* src_delete (SRC_STATE *state) ;
         """
         #try
         c_src.src_delete(self._state)
