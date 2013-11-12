@@ -40,7 +40,7 @@ c_src = ctypes.cdll.LoadLibrary(ext_lib_name)
 # Libsamplerate uses floats for samples.
 
 _SAMPLE_FORMAT = ctypes.c_float
-_SAMPLE_FORMAT_dtype = np.float32
+SAMPLE_FORMAT_dtype = np.float32
 _SAMPLE_BYTES = ctypes.sizeof(_SAMPLE_FORMAT)
 
 # This structure is used to pass data to the resampler
@@ -178,8 +178,8 @@ class Resampler(object):
             raise ValueError("data_in has incorrect memory layout. The stride for the last dimension must be one entry")
 
         # Lets convert the array to src's sample format
-        data_in_formatted = (data_in.astype(_SAMPLE_FORMAT_dtype) if
-                            data_in.dtype != _SAMPLE_FORMAT_dtype else data_in)
+        data_in_formatted = (data_in.astype(SAMPLE_FORMAT_dtype) if
+                            data_in.dtype != SAMPLE_FORMAT_dtype else data_in)
 
         data_in_raw = data_in_formatted.ctypes.data_as(ctypes.POINTER(_SAMPLE_FORMAT))
         data_in_frames = data_in_formatted.size / self.channels
@@ -190,7 +190,7 @@ class Resampler(object):
         data_out_frames0 = self.frames_remaining if end_of_input else data_in_frames * actual_ratio
         data_out_frames = int(np.ceil(data_out_frames0)) + 1
         data_out = np.ndarray((data_out_frames, self.channels),
-                                    dtype = _SAMPLE_FORMAT_dtype, order = 'C')
+                                    dtype = SAMPLE_FORMAT_dtype, order = 'C')
         data_out_raw = data_out.ctypes.data_as(ctypes.POINTER(_SAMPLE_FORMAT))
 
         srcdata = _SRC_DATA(
@@ -241,9 +241,9 @@ class Resampler(object):
         """
         iterobj = iter(iterable)
         try:
-            iterratios = iter(ratios)
+            iterratios = iter(ratio)
         except TypeError:
-            iterratios = repeat(ratios)
+            iterratios = repeat(ratio)
 
         while True:
             try:
@@ -259,7 +259,7 @@ class Resampler(object):
         except StopIteration:
             pass
 
-        yield end_input(this_ratio)[0]
+        yield self.end_input(this_ratio)[0]
 
 
     def set_default_ratio(self, new_default_ratio):
